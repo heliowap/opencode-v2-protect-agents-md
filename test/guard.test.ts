@@ -14,10 +14,10 @@ let host: Host
 let plan: Plan = () => []
 
 const phaseAndStep = (messages: readonly ChatMessage[]) => {
-  const users = messages.filter((m) => m.role === "user" && !text(m).includes("You are a subagent"))
-  const lastUser = messages.findLastIndex((m) => m.role === "user")
+  const lastUser = messages.findLastIndex((m) => m.role === "user" && /^prompt \d+$/.test(text(m)))
+  const phase = lastUser < 0 ? -1 : Number(text(messages[lastUser]!).slice("prompt ".length))
   const rounds = messages.slice(lastUser).filter((m) => m.role === "assistant" && m.tool_calls?.length).length
-  return { phase: users.length - 1, step: rounds }
+  return { phase, step: rounds }
 }
 
 beforeAll(async () => {
@@ -73,8 +73,43 @@ const run = async (testPlan: Plan, answer: string | undefined, prompts = 1, dire
     repoChanged: readFileSync(repoAgents, "utf8") !== ORIGINAL,
     forms,
     denied: results.some((r) => r.includes(DENIED)),
+    results,
   }
 }
+
+test.each<[string, (dir: string) => string]>([
+  ["cat", (dir) => `cat "${dir}/AGENTS.md"`],
+  ["head", (dir) => `head -n 1 "${dir}/AGENTS.md"`],
+  ["tail", (dir) => `tail -n 1 "${dir}/AGENTS.md"`],
+  ["grep", (dir) => `grep -n Global "${dir}/AGENTS.md"`],
+  ["git diff", (dir) => `git diff --no-index -- /dev/null "${dir}/AGENTS.md"`],
+])("a read-only shell %s returns the protected file without approval", async (_name, command) => {
+  const outcome = await run((dir) => [[{ tool: "shell", args: { command: command(dir) } }]], undefined)
+  expect(outcome).toMatchObject({ changed: false, repoChanged: false, denied: false, forms: 0 })
+  expect(outcome.results.join("\n")).toContain("# Global rules")
+}, 60_000)
+
+test.each<[string, (dir: string) => string]>([
+  ["a read followed by an append", (dir) => `cat "${dir}/AGENTS.md" && printf x >> "${dir}/AGENTS.md"`],
+  ["a read with an output redirect", (dir) => `cat "${dir}/AGENTS.md" > "${dir}/AGENTS.md"`],
+  ["a read with a writing substitution", (dir) => `cat "$(printf x >> '${dir}/AGENTS.md'; printf %s '${dir}/AGENTS.md')"`],
+  ["a read followed by a newline writer", (dir) => `cat "${dir}/AGENTS.md"\nprintf x >> "${dir}/AGENTS.md"`],
+  ["a read piped into a writer", (dir) => `cat "${dir}/AGENTS.md" | tee "${dir}/AGENTS.md"`],
+  ["sed with a write script", (dir) => `sed 'w ${dir}/AGENTS.md' "${dir}/notes.md"`],
+  ["git diff with an output file", (dir) => `git diff --no-index --output="${dir}/AGENTS.md" /dev/null "${dir}/notes.md"`],
+  ["git diff with a separate output option", (dir) => `git diff --no-index --output "${dir}/AGENTS.md" /dev/null "${dir}/notes.md"`],
+])("%s remains denied without approval", async (_name, command) => {
+  writeFileSync(join(host.configDir, "notes.md"), "new rules\n")
+  const outcome = await run((dir) => [[{ tool: "shell", args: { command: command(dir) } }]], undefined)
+  expect(outcome).toMatchObject({ changed: false, repoChanged: false, denied: true, forms: 0 })
+}, 60_000)
+
+test("git status can inspect a protected path without approval", async () => {
+  expect(Bun.spawnSync(["git", "init", "--quiet", host.project]).exitCode).toBe(0)
+  const outcome = await run(() => [[{ tool: "shell", args: { command: "git status --short -- AGENTS.md" } }]], undefined)
+  expect(outcome).toMatchObject({ changed: false, repoChanged: false, denied: false, forms: 0 })
+  expect(outcome.results.join("\n")).toContain("?? AGENTS.md")
+}, 60_000)
 
 test("an edit without a question is denied", async () => {
   const outcome = await run((d) => [[write(d)]], undefined)
@@ -84,6 +119,24 @@ test("an edit without a question is denied", async () => {
 test("Yes to the exact question allows the edit", async () => {
   const outcome = await run((d) => [[write(d), ask(), write(d)]], "Yes")
   expect(outcome).toMatchObject({ changed: true, forms: 1 })
+}, 60_000)
+
+test("a shell read does not approve a later shell write", async () => {
+  const outcome = await run((dir) => [[
+    { tool: "shell", args: { command: `cat "${dir}/AGENTS.md"` } },
+    { tool: "shell", args: { command: `printf x >> "${dir}/AGENTS.md"` } },
+  ]], undefined)
+  expect(outcome).toMatchObject({ changed: false, repoChanged: false, denied: true, forms: 0 })
+  expect(outcome.results.join("\n")).toContain("# Global rules")
+}, 60_000)
+
+test("Yes allows a shell write until the next user message", async () => {
+  const outcome = await run((dir) => [
+    [ask(), { tool: "shell", args: { command: `printf approved >> "${dir}/AGENTS.md"` } }],
+    [{ tool: "shell", args: { command: `printf revoked >> "${dir}/AGENTS.md"` } }],
+  ], "Yes", 2)
+  expect(readFileSync(join(host.configDir, "AGENTS.md"), "utf8")).toBe("# Global rules\napproved")
+  expect(outcome).toMatchObject({ changed: true, repoChanged: false, denied: true, forms: 1 })
 }, 60_000)
 
 test("No keeps it denied", async () => {
