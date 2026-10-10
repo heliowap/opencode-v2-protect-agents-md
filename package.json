@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "guard": "bun ./bin/protect-agents.ts",
     "typecheck": "tsgo --noEmit",
     "test": "bun test"
   },
