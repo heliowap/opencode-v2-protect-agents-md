@@ -2,6 +2,7 @@ import { Plugin } from "@opencode/plugin"
 import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
+import { isSupportedReadCommand } from "./read-only-shell.ts"
 
 // Agents may edit any AGENTS.md (the global one and every repo's, including new ones) only after
 // the user answers "Yes" to QUESTION through the question tool, and only until the user's next
@@ -53,7 +54,7 @@ export default Plugin.define({
     await ctx.tool.hook("execute.before", (event) => {
       if (event.tool !== "shell" || typeof event.input !== "object" || event.input === null) return
       const { command } = event.input as { command?: unknown }
-      if (typeof command === "string" && MENTIONS_FILE.test(command)) flaggedShellCalls.add(event.id)
+      if (typeof command === "string" && MENTIONS_FILE.test(command) && !isSupportedReadCommand(command)) flaggedShellCalls.add(event.id)
     })
 
     await ctx.tool.hook("execute.after", (event) => {

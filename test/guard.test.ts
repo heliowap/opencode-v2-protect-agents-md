@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { text, type Call, type ChatMessage, type Reply } from "./harness/fixture.ts"
 import { Host } from "./harness/host.ts"
@@ -29,6 +29,7 @@ beforeAll(async () => {
     },
     extraPlugins: [join(import.meta.dir, "../src/index.ts")],
   })
+  symlinkSync(join(host.root, "config"), join(host.root, "home", ".config"))
 })
 
 afterAll(async () => {
@@ -79,6 +80,7 @@ const run = async (testPlan: Plan, answer: string | undefined, prompts = 1, dire
 
 test.each<[string, (dir: string) => string]>([
   ["cat", (dir) => `cat "${dir}/AGENTS.md"`],
+  ["cat via home", () => "cat ~/.config/opencode/AGENTS.md"],
   ["head", (dir) => `head -n 1 "${dir}/AGENTS.md"`],
   ["tail", (dir) => `tail -n 1 "${dir}/AGENTS.md"`],
   ["grep", (dir) => `grep -n Global "${dir}/AGENTS.md"`],
@@ -109,6 +111,29 @@ test("git status can inspect a protected path without approval", async () => {
   const outcome = await run(() => [[{ tool: "shell", args: { command: "git status --short -- AGENTS.md" } }]], undefined)
   expect(outcome).toMatchObject({ changed: false, repoChanged: false, denied: false, forms: 0 })
   expect(outcome.results.join("\n")).toContain("?? AGENTS.md")
+}, 60_000)
+
+test("a recognized shell read cannot override a configured deny", async () => {
+  let calls = 0
+  const isolated = await Host.start({
+    extraPlugins: [join(import.meta.dir, "../src/index.ts")],
+    configFiles: { "AGENTS.md": ORIGINAL },
+    permissions: () => [{ action: "shell", resource: "cat *", effect: "deny" }],
+    script: () => calls++ === 0
+      ? { tool: "shell", args: { command: `cat "${isolated.configDir}/AGENTS.md"` } }
+      : { text: "done" },
+  })
+  try {
+    const session = await isolated.session()
+    await isolated.prompt(session, "Inspect the protected file")
+    await isolated.settle(session)
+    const results = isolated.fixture.calls.flatMap((call) => call.request.messages).filter((message) => message.role === "tool").map(text).join("\n")
+    expect(results).toContain("permission.rejected")
+    expect(results).not.toContain("# Global rules")
+    expect(readFileSync(join(isolated.configDir, "AGENTS.md"), "utf8")).toBe(ORIGINAL)
+  } finally {
+    await isolated.stop()
+  }
 }, 60_000)
 
 test("an edit without a question is denied", async () => {
