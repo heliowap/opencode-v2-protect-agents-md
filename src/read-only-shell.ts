@@ -125,10 +125,12 @@ const readGit = (args: readonly string[]): boolean => {
     } else if (options && profile.flags.has(arg)) {
       if (arg === "--no-index") noIndex = true
     } else if (options && profile.numbers.has(arg)) {
+      if (arg === "-U" || arg === "--unified") return false
       if (!/^[0-9]+$/.test(args[++index] ?? "")) return false
     } else if (options && arg.startsWith("-")) {
+      if (profile.numbers.has("-U") && /^-U[0-9]+$/.test(arg)) continue
       const equal = arg.indexOf("=")
-      if (equal < 0 || !profile.numbers.has(arg.slice(0, equal)) || !/^[0-9]+$/.test(arg.slice(equal + 1))) return false
+      if (!arg.startsWith("--") || equal < 0 || !profile.numbers.has(arg.slice(0, equal)) || !/^[0-9]+$/.test(arg.slice(equal + 1))) return false
     } else {
       if (!arg) return false
       operands++

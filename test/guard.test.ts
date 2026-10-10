@@ -85,6 +85,7 @@ test.each<[string, (dir: string) => string]>([
   ["tail", (dir) => `tail -n 1 "${dir}/AGENTS.md"`],
   ["grep", (dir) => `grep -n Global "${dir}/AGENTS.md"`],
   ["git diff", (dir) => `git diff --no-index -- /dev/null "${dir}/AGENTS.md"`],
+  ["git diff context", (dir) => `git diff --no-index -U3 -- /dev/null "${dir}/AGENTS.md"`],
 ])("a read-only shell %s returns the protected file without approval", async (_name, command) => {
   const outcome = await run((dir) => [[{ tool: "shell", args: { command: command(dir) } }]], undefined)
   expect(outcome).toMatchObject({ changed: false, repoChanged: false, denied: false, forms: 0 })
