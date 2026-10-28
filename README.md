@@ -1,3 +1,5 @@
+> **Moved.** This plugin now lives in [heliowap/opencode-plugins](https://github.com/heliowap/opencode-plugins/tree/main/plugins/protect-agents-md). Install: `opencode plugin add 'github:heliowap/opencode-plugins#main::path:plugins/protect-agents-md'`. This repository is archived.
+
 # opencode-v2-protect-agents-md
 
 An OpenCode v2 plugin that stops agents from editing any `AGENTS.md` without
